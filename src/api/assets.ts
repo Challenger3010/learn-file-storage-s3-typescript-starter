@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync } from "fs";
 import type { ApiConfig } from "../config";
 import path from "path";
+import { getVideo, updateVideo, type Video } from "../db/videos";
+import { S3Client } from "bun";
+import { BadRequestError } from "./errors";
 
 export function ensureAssetsDir(cfg: ApiConfig) {
   if (!existsSync(cfg.assetsRoot)) {

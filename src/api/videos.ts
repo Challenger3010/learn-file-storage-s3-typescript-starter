@@ -1,7 +1,7 @@
 import { respondWithJSON } from "./json";
 
 import { type ApiConfig } from "../config";
-import { S3Client, type BunRequest } from "bun";
+import { type BunRequest } from "bun";
 import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
 import { getBearerToken, validateJWT } from "../auth";
 import { getVideo, updateVideo } from "../db/videos";
@@ -73,27 +73,22 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const aspectRatio = await getVideoAspectRatio(assetDiskPath);
   const processedVideo = await processVideoForFastStart(assetDiskPath);
 
-  console.log(assetDiskPath);
-  console.log(processedVideo);
-
   const s3Name = `${aspectRatio}/${processedVideo}`;
 
   const s3File = cfg.s3Client.file(s3Name);
+
   const content = Bun.file(`assets/${processedVideo}`);
   const oldVid = Bun.file(assetDiskPath);
 
   await s3File.write(content, { type: mediaType });
 
-  const newVideoUrl = getS3URL(cfg, s3Name);
-
-  video.videoURL = newVideoUrl;
-
+  video.videoURL = `${cfg.s3CfDistribution}/${s3Name}`;
   updateVideo(cfg.db, video);
 
   await content.delete();
   await oldVid.delete();
 
-  return respondWithJSON(200, null);
+  return respondWithJSON(200, video);
 }
 
 export async function getVideoAspectRatio(filePath: string) {
