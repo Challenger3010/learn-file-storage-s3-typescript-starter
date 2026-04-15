@@ -70,16 +70,103 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 
   await Bun.write(assetDiskPath, fileData);
 
-  const s3File = cfg.s3Client.file(fileName);
-  const content = Bun.file(assetDiskPath);
+  const aspectRatio = await getVideoAspectRatio(assetDiskPath);
+  const processedVideo = await processVideoForFastStart(assetDiskPath);
+
+  console.log(assetDiskPath);
+  console.log(processedVideo);
+
+  const s3Name = `${aspectRatio}/${processedVideo}`;
+
+  const s3File = cfg.s3Client.file(s3Name);
+  const content = Bun.file(`assets/${processedVideo}`);
+  const oldVid = Bun.file(assetDiskPath);
+
   await s3File.write(content, { type: mediaType });
 
-  const newVideoUrl = getS3URL(cfg, fileName);
+  const newVideoUrl = getS3URL(cfg, s3Name);
+
   video.videoURL = newVideoUrl;
 
   updateVideo(cfg.db, video);
 
   await content.delete();
+  await oldVid.delete();
 
   return respondWithJSON(200, null);
+}
+
+export async function getVideoAspectRatio(filePath: string) {
+  const proc = Bun.spawn({
+    cmd: [
+      "ffprobe",
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height",
+      "-of",
+      "json",
+      filePath,
+    ],
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const stdoutText = await new Response(proc.stdout).json();
+  const stderrText = await new Response(proc.stderr).text();
+
+  if (stderrText) {
+    console.error("FFprobe Fehler:", stderrText);
+    return null;
+  }
+
+  const { width, height } = stdoutText.streams[0];
+
+  const ratio = width / height;
+
+  let aspectRatio = "";
+
+  if (ratio <= 1.8 && ratio >= 1.6) {
+    aspectRatio = "landscape";
+  } else if (ratio <= 0.6 && ratio >= 0.5) {
+    aspectRatio = "portrait";
+  } else {
+    aspectRatio = "other";
+  }
+
+  return aspectRatio;
+}
+
+export async function processVideoForFastStart(inputFilePath: string) {
+  let outputFilePath = `${inputFilePath}.processed`;
+
+  const proc = Bun.spawn({
+    cmd: [
+      "ffmpeg",
+      "-i",
+      inputFilePath,
+      "-movflags",
+      "faststart",
+      "-map_metadata",
+      "0",
+      "-codec",
+      "copy",
+      "-f",
+      "mp4",
+      outputFilePath,
+    ],
+    stderr: "inherit",
+  });
+
+  const exitCode = await proc.exited;
+
+  if (exitCode !== 0) {
+    throw new Error(`FFmpeg Prozess fehlgeschlagen mit Code ${exitCode}`);
+  }
+
+  outputFilePath = outputFilePath.split("/")[1];
+
+  return outputFilePath;
 }
